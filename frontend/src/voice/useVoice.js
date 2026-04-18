@@ -5,7 +5,8 @@
 //   1. getUserMedia({audio:true}) once on mount; stop on unmount.
 //   2. Reconcile a Map<playerId, Peer> against the current seat list.
 //   3. Bridge server 'voice:signal' events to the right Peer instance.
-//   4. Expose mute/unmute, mic error, and a per-peer status snapshot.
+//   4. Expose mute/unmute, mic error, autoplay recovery, and a per-peer
+//      status snapshot (for VoiceBar).
 //
 // Design choices:
 //   - Peer map lives in useRef, not useState. Its lifecycle is longer and
@@ -13,6 +14,9 @@
 //     READ-ONLY snapshot (state strings + stream presence) that the UI renders.
 //   - Initiator rule: me.playerId < them.playerId. Deterministic both sides.
 //   - Audio elements are created via ref so re-renders don't restart them.
+//   - Voice-activity analyser runs on a CLONED MediaStream so Chrome doesn't
+//     mute the <audio> element (known browser behaviour when the same
+//     stream is attached to both an <audio> and a MediaStreamSourceNode).
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,19 +26,17 @@ import { Peer } from './peer.js';
 const STATS_INTERVAL_MS = 1500;
 
 export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
-  const [muted, setMuted] = useState(true); // start muted - no surprise hot-mic
+  const [muted, setMuted] = useState(true);
   const [micError, setMicError] = useState(null);
   const [micReady, setMicReady] = useState(false);
-  /**
-   * peerStates:
-   *   playerId -> { connectionState, iceState, signalingState, streaming,
-   *                 packetsReceived, jitter }
-   */
   const [peerStates, setPeerStates] = useState({});
+  const [speakingMap, setSpeakingMap] = useState({});
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
   const localStreamRef = useRef(null);
   const peersRef = useRef(new Map());
-  const audioElsRef = useRef(new Map());   // playerId -> HTMLAudioElement
+  const audioElsRef = useRef(new Map());
+  const analysersRef = useRef(new Map());
 
   // -------------------------------------------------------------- helpers
 
@@ -49,47 +51,9 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     }));
   }, []);
 
-  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
-  const attachAudio = useCallback((playerId, stream) => {
-    let el = audioElsRef.current.get(playerId);
-    if (!el) {
-      el = document.createElement('audio');
-      el.autoplay = true;
-      el.playsInline = true;
-      el.muted = false;
-      el.volume = 1.0;
-      el.setAttribute('data-peer', playerId);
-      document.body.appendChild(el);
-      audioElsRef.current.set(playerId, el);
-    }
-    el.srcObject = stream;
-    el.muted = false;
-    el.volume = 1.0;
-    const playPromise = el.play?.();
-    if (playPromise && typeof playPromise.then === 'function') {
-      playPromise.catch(() => {
-        // Autoplay rejected - surface a "tap to enable" UI prompt.
-        setAutoplayBlocked(true);
-      });
-    }
-    attachAnalyser(playerId, stream);
-  }, [attachAnalyser]);
-
-  // User-gesture recovery: call this from a button onClick when autoplay
-  // was blocked. Iterates every remote audio element and re-tries play().
-  const resumeAudio = useCallback(() => {
-    for (const el of audioElsRef.current.values()) {
-      try { el.muted = false; el.play?.().catch(() => {}); } catch {}
-    }
-    setAutoplayBlocked(false);
-  }, []);
-
-  // ---- speaking detection (AnalyserNode polling) --------------------------
-  const analysersRef = useRef(new Map()); // playerId -> {ctx, src, analyser, data, raf}
-  const [speakingMap, setSpeakingMap] = useState({});
-
+  // Voice-activity analyser. Declared BEFORE attachAudio because attachAudio
+  // calls it; JavaScript's temporal dead zone would otherwise crash at mount.
   const attachAnalyser = useCallback((playerId, stream) => {
-    // Tear down any previous analyser for this peer.
     const prev = analysersRef.current.get(playerId);
     if (prev) {
       try { cancelAnimationFrame(prev.raf); } catch {}
@@ -103,11 +67,9 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     try {
       const Ctor = window.AudioContext || window.webkitAudioContext;
       if (!Ctor) return;
-      // IMPORTANT: Chrome mutes an <audio> element whose srcObject stream is
-      // ALSO piped into a MediaStreamAudioSourceNode. That would silence
-      // the peer's voice even though the audio is arriving. Work around it
-      // by cloning the audio tracks into a separate MediaStream that only
-      // the analyser reads - the <audio> element keeps the original.
+      // Chrome mutes an <audio> element whose srcObject stream is ALSO piped
+      // into a MediaStreamAudioSourceNode. Clone the tracks into a separate
+      // MediaStream consumed only by the analyser so <audio> plays normally.
       const analysisStream = new MediaStream(
         stream.getAudioTracks().map((t) => t.clone())
       );
@@ -141,6 +103,35 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     } catch (e) {
       // AudioContext failed; skip speaking detection for this peer.
     }
+  }, []);
+
+  const attachAudio = useCallback((playerId, stream) => {
+    let el = audioElsRef.current.get(playerId);
+    if (!el) {
+      el = document.createElement('audio');
+      el.autoplay = true;
+      el.playsInline = true;
+      el.muted = false;
+      el.volume = 1.0;
+      el.setAttribute('data-peer', playerId);
+      document.body.appendChild(el);
+      audioElsRef.current.set(playerId, el);
+    }
+    el.srcObject = stream;
+    el.muted = false;
+    el.volume = 1.0;
+    const playPromise = el.play?.();
+    if (playPromise && typeof playPromise.then === 'function') {
+      playPromise.catch(() => setAutoplayBlocked(true));
+    }
+    attachAnalyser(playerId, stream);
+  }, [attachAnalyser]);
+
+  const resumeAudio = useCallback(() => {
+    for (const el of audioElsRef.current.values()) {
+      try { el.muted = false; el.play?.().catch(() => {}); } catch {}
+    }
+    setAutoplayBlocked(false);
   }, []);
 
   const removeAudio = useCallback((playerId) => {
@@ -211,7 +202,6 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        // Start muted - flip .enabled when the user hits the mic button.
         stream.getAudioTracks().forEach((t) => { t.enabled = false; });
         localStreamRef.current = stream;
         setMicReady(true);
@@ -228,13 +218,21 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
       }
-      // Tear down every peer.
       peersRef.current.forEach((p) => p.close());
       peersRef.current.clear();
       audioElsRef.current.forEach((el) => { try { el.remove(); } catch {} });
       audioElsRef.current.clear();
+      analysersRef.current.forEach((entry) => {
+        try { cancelAnimationFrame(entry.raf); } catch {}
+        try { entry.ctx.close(); } catch {}
+        if (entry.analysisStream) {
+          try { entry.analysisStream.getTracks().forEach((t) => t.stop()); } catch {}
+        }
+      });
+      analysersRef.current.clear();
       setMicReady(false);
       setPeerStates({});
+      setSpeakingMap({});
     };
   }, [enabled]);
 
@@ -250,34 +248,26 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
   useEffect(() => {
     if (!enabled || !micReady || !myPlayerId) return;
 
-    // 1. Close peers for seats that disappeared.
     for (const existingId of Array.from(peersRef.current.keys())) {
       if (!remotePlayerIds.includes(existingId)) tearDownPeer(existingId);
     }
-    // 2. Open peers for new seats.
     for (const pid of remotePlayerIds) {
       if (peersRef.current.has(pid)) continue;
-      // String compare keeps both sides in agreement on who offers.
       const isInitiator = myPlayerId < pid;
       createPeer(pid, { isInitiator });
-      // Initiator offer is triggered by onnegotiationneeded after addTrack.
     }
   }, [enabled, micReady, myPlayerId, remotePlayerIds, createPeer, tearDownPeer]);
 
-  // -------------------------------------------------------------- signaling bridge
+  // -------------------------------------------------------------- signaling
 
   useEffect(() => {
     const onSignal = async ({ fromPlayerId, payload }) => {
       if (!payload) return;
       let peer = peersRef.current.get(fromPlayerId);
-
-      // Lazy-create peer on incoming offer - covers the race where the
-      // remote's offer arrives before our seats effect has run.
       if (!peer && payload.type === 'offer' && localStreamRef.current) {
         peer = createPeer(fromPlayerId, { isInitiator: false });
       }
       if (!peer) return;
-
       try {
         switch (payload.type) {
           case 'offer':     await peer.acceptOffer(payload.sdp);       break;
@@ -293,7 +283,7 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     return () => socket.off('voice:signal', onSignal);
   }, [createPeer, tearDownPeer]);
 
-  // -------------------------------------------------------------- stats polling
+  // -------------------------------------------------------------- stats poll
 
   useEffect(() => {
     if (!enabled) return;
