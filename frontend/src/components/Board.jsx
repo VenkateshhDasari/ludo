@@ -116,9 +116,13 @@ function TokenPiece({ color, clickable, onClick, tokenIndex, justCaptured, mine 
       onClick={onClick}
       disabled={!clickable}
       aria-label={`${color} token ${tokenIndex + 1}`}
+      // pointer-events-none when not clickable lets the click fall through to
+      // any legal token stacked BELOW this one. Without it, a disabled token
+      // sitting on top silently swallows every click and the legal token
+      // underneath is unreachable.
       className={`relative rounded-full border shadow-token transition
         w-[68%] aspect-square
-        ${clickable ? 'cursor-pointer animate-bob ring-2 ring-white/90' : 'cursor-default'}
+        ${clickable ? 'cursor-pointer animate-bob ring-2 ring-white/90' : 'cursor-default pointer-events-none'}
         ${justCaptured ? 'animate-pop' : ''}
       `}
       style={style}
@@ -422,8 +426,11 @@ export default function Board({
                               width: '100%',
                               height: '100%',
                               transform: here.length > 1
-                                ? `translate(${(stackIdx - (here.length - 1) / 2) * 18}%, 0)`
+                                ? `translate(${(stackIdx - (here.length - 1) / 2) * 28}%, 0)`
                                 : 'none',
+                              // Legal tokens sit above disabled ones so click
+                              // priority matches visual priority.
+                              zIndex: clickable ? 3 : 1,
                             }}
                           >
                             <TokenPiece
