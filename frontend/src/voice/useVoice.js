@@ -49,22 +49,39 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     }));
   }, []);
 
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const attachAudio = useCallback((playerId, stream) => {
     let el = audioElsRef.current.get(playerId);
     if (!el) {
       el = document.createElement('audio');
       el.autoplay = true;
       el.playsInline = true;
+      el.muted = false;
+      el.volume = 1.0;
       el.setAttribute('data-peer', playerId);
-      // Append to body so it keeps playing across re-renders.
       document.body.appendChild(el);
       audioElsRef.current.set(playerId, el);
     }
     el.srcObject = stream;
-    el.play?.().catch(() => {/* some browsers require a gesture first */});
-    // Attach / reattach a voice-activity analyser so the UI can pulse this
-    // peer's avatar when they're actually speaking.
+    el.muted = false;
+    el.volume = 1.0;
+    const playPromise = el.play?.();
+    if (playPromise && typeof playPromise.then === 'function') {
+      playPromise.catch(() => {
+        // Autoplay rejected - surface a "tap to enable" UI prompt.
+        setAutoplayBlocked(true);
+      });
+    }
     attachAnalyser(playerId, stream);
+  }, [attachAnalyser]);
+
+  // User-gesture recovery: call this from a button onClick when autoplay
+  // was blocked. Iterates every remote audio element and re-tries play().
+  const resumeAudio = useCallback(() => {
+    for (const el of audioElsRef.current.values()) {
+      try { el.muted = false; el.play?.().catch(() => {}); } catch {}
+    }
+    setAutoplayBlocked(false);
   }, []);
 
   // ---- speaking detection (AnalyserNode polling) --------------------------
@@ -74,13 +91,28 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
   const attachAnalyser = useCallback((playerId, stream) => {
     // Tear down any previous analyser for this peer.
     const prev = analysersRef.current.get(playerId);
-    if (prev) { try { cancelAnimationFrame(prev.raf); prev.ctx.close(); } catch {} analysersRef.current.delete(playerId); }
+    if (prev) {
+      try { cancelAnimationFrame(prev.raf); } catch {}
+      try { prev.ctx.close(); } catch {}
+      if (prev.analysisStream) {
+        try { prev.analysisStream.getTracks().forEach((t) => t.stop()); } catch {}
+      }
+      analysersRef.current.delete(playerId);
+    }
 
     try {
       const Ctor = window.AudioContext || window.webkitAudioContext;
       if (!Ctor) return;
+      // IMPORTANT: Chrome mutes an <audio> element whose srcObject stream is
+      // ALSO piped into a MediaStreamAudioSourceNode. That would silence
+      // the peer's voice even though the audio is arriving. Work around it
+      // by cloning the audio tracks into a separate MediaStream that only
+      // the analyser reads - the <audio> element keeps the original.
+      const analysisStream = new MediaStream(
+        stream.getAudioTracks().map((t) => t.clone())
+      );
       const ctx = new Ctor();
-      const src = ctx.createMediaStreamSource(stream);
+      const src = ctx.createMediaStreamSource(analysisStream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       src.connect(analyser);
@@ -88,16 +120,14 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
       let lastSpeak = 0;
       const loop = () => {
         analyser.getByteTimeDomainData(data);
-        // Normalised peak deviation from 128 (silence baseline).
         let peak = 0;
         for (let i = 0; i < data.length; i++) {
           const v = Math.abs(data[i] - 128);
           if (v > peak) peak = v;
         }
         const now = Date.now();
-        const isSpeaking = peak > 12; // empirical threshold
+        const isSpeaking = peak > 12;
         if (isSpeaking) lastSpeak = now;
-        // Debounce: stay "speaking" for 300ms after last threshold trip.
         const display = now - lastSpeak < 300;
         setSpeakingMap((prev) =>
           prev[playerId] === display ? prev : { ...prev, [playerId]: display }
@@ -105,7 +135,7 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
         const entry = analysersRef.current.get(playerId);
         if (entry) entry.raf = requestAnimationFrame(loop);
       };
-      const entry = { ctx, src, analyser, data, raf: 0 };
+      const entry = { ctx, src, analyser, data, raf: 0, analysisStream };
       analysersRef.current.set(playerId, entry);
       entry.raf = requestAnimationFrame(loop);
     } catch (e) {
@@ -124,6 +154,9 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     if (entry) {
       try { cancelAnimationFrame(entry.raf); } catch {}
       try { entry.ctx.close(); } catch {}
+      if (entry.analysisStream) {
+        try { entry.analysisStream.getTracks().forEach((t) => t.stop()); } catch {}
+      }
       analysersRef.current.delete(playerId);
     }
     setSpeakingMap((prev) => {
@@ -292,5 +325,7 @@ export function useVoice({ enabled, roomCode, myPlayerId, seats }) {
     toggleMute,
     peerStates,
     speakingMap,
+    autoplayBlocked,
+    resumeAudio,
   };
 }

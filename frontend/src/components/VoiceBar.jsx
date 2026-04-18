@@ -40,7 +40,7 @@ function PeerDot({ seat, peer }) {
 }
 
 export default function VoiceBar({ seats, myPlayerId, voice }) {
-  const { muted, toggleMute, micReady, micError, peerStates } = voice;
+  const { muted, toggleMute, micReady, micError, peerStates, autoplayBlocked, resumeAudio } = voice;
   const [open, setOpen] = useState(false);
 
   const peers = (seats || []).filter((s) => s.playerId !== myPlayerId);
@@ -86,6 +86,15 @@ export default function VoiceBar({ seats, myPlayerId, voice }) {
         <div className="mt-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-2 py-1.5">
           Mic: {micError}. Grant permission and reload to enable voice.
         </div>
+      )}
+
+      {autoplayBlocked && (
+        <button
+          onClick={resumeAudio}
+          className="mt-2 w-full rounded-lg bg-gold-400/20 border border-gold-400/40 text-gold-400 text-xs py-2 font-display hover:bg-gold-400/30"
+        >
+          🔈 Tap to enable remote voice (autoplay was blocked)
+        </button>
       )}
 
       {open && (
