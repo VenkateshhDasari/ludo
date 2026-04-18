@@ -1,0 +1,19 @@
+# One-click Render deploy for the Ludo backend.
+# Create the repo on GitHub, click "New + from Blueprint" on Render,
+# point at this repo; Render will pick up this file.
+services:
+  - type: web
+    name: ludo-backend
+    runtime: node
+    plan: free
+    region: frankfurt          # change to your closest region
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000            # Render injects PORT anyway; this is a hint.
+      - key: CLIENT_ORIGIN
+        sync: false             # set this to your frontend URL in the Render dashboard
+                                # e.g. https://ludo.vercel.app

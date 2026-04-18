@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------- */
+/* Global chrome: deep navy "game parlour" with star dust + diagonal gleam */
+/* ---------------------------------------------------------------------- */
+:root {
+  --star: rgba(255, 255, 255, 0.75);
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+  color: #f5efe0;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(62, 103, 197, 0.55), transparent 55%),
+    radial-gradient(ellipse at 80% 100%, rgba(26, 56, 117, 0.9), transparent 60%),
+    radial-gradient(1px 1px at 10% 20%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 30% 40%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 55% 12%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 70% 60%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 85% 30%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 15% 75%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 48% 85%, var(--star), transparent 60%),
+    radial-gradient(1px 1px at 92% 78%, var(--star), transparent 60%),
+    linear-gradient(160deg, #0a1835 0%, #122552 55%, #06112b 100%);
+  background-attachment: fixed;
+}
+
+/* Gleaming diagonal streaks behind content for depth (matches Figma ref). */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 45%, rgba(255, 255, 255, 0.06) 48%, transparent 52%),
+    linear-gradient(115deg, transparent 62%, rgba(255, 255, 255, 0.04) 65%, transparent 68%);
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* A reusable "polished pill" style for the top/bottom chrome controls. */
+.chip {
+  @apply inline-flex items-center gap-2 rounded-full bg-chrome-800/70 backdrop-blur
+         border border-white/10 px-3 py-1.5 text-sm font-display font-medium;
+}
+
+/* Reusable button primitives (kept tiny and atomic, design-system style). */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3
+         font-display font-semibold tracking-wide transition
+         active:scale-[0.97];
+}
+.btn-primary {
+  @apply btn text-chrome-900 bg-gold-400 hover:bg-gold-500
+         shadow-[0_6px_0_0_theme(colors.gold.600)];
+}
+.btn-ghost {
+  @apply btn text-white bg-white/10 hover:bg-white/20 border border-white/15;
+}
+
+/* Scrollbar in the event log */
+.log::-webkit-scrollbar { width: 4px; }
+.log::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
+
+/* Last-move arrow: fade from 1 -> 0 over 1.5s. */
+@keyframes lastMoveFade {
+  0%   { opacity: 0.9; }
+  70%  { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+/* Voice activity ring pulse. */
+@keyframes voicePulse {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+.voice-pulse { animation: voicePulse 1s ease-out infinite; }
+
+/* Emoji reaction float-up. Short, contained range so top-row chips don't
+   push the bubble above the viewport. Anchor is top:0 of avatar wrapper;
+   negative Y translation moves it above. */
+@keyframes emojiFloat {
+  0%   { transform: translate(-50%, -8px)  scale(0.5); opacity: 0; }
+  20%  { transform: translate(-50%, -28px) scale(1.15); opacity: 1; }
+  80%  { transform: translate(-50%, -52px) scale(1);    opacity: 1; }
+  100% { transform: translate(-50%, -68px) scale(0.9);  opacity: 0; }
+}
+
+/* Turn-timer ring countdown shared keyframe - actual drain driven by JS. */
