@@ -67,7 +67,20 @@ and send to a friend. Anyone, anywhere.
 ## Gotchas you should know before shipping
 
 - **HTTPS is mandatory for voice.** `getUserMedia` is blocked in non-secure contexts except on `localhost`. Both Render and Vercel give you HTTPS for free, so this "just works" — but if you bring-your-own hosting, you need a real cert.
-- **Symmetric NAT** (some mobile carriers) will break voice without a TURN server. Out of scope for free-tier hosting; add Twilio/Xirsys/coturn if you see voice silently failing on mobile data.
+- **Voice across networks / mobile data / India ISPs**: the app now ships
+  with the **Open Relay Project** public TURN relay as a default fallback.
+  That's enough to make voice work between players on different carriers,
+  Wi-Fi, or behind symmetric-NAT routers - audio is relayed via
+  `openrelay.metered.ca` on UDP/80, UDP/443, and TCP/443.
+  - **Free, unauthenticated, shared** - rate-limited and best-effort.
+  - If you need reliable voice at scale, sign up for a free Metered
+    (https://metered.ca) or Twilio (https://twilio.com) TURN plan and
+    set `VITE_ICE_SERVERS` in Vercel's env to a JSON array:
+    ```
+    VITE_ICE_SERVERS=[{"urls":"turn:your.turn.example:3478","username":"u","credential":"p"}]
+    ```
+  - Redeploy the frontend after changing the env var (Vite bakes env
+    vars into the bundle at build time).
 - **In-memory rooms.** A backend redeploy or restart wipes all rooms. This is by design for the free demo; migrate to Redis when you have real users.
 - **Single process.** One Node instance holds every room. Horizontal scaling needs the Socket.io Redis adapter. Fine for dozens of rooms, not hundreds.
 - **Free Render sleeps.** Use UptimeRobot (free) to ping `/health` every 10 min to keep the dyno warm, or accept the cold-start.

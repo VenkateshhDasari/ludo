@@ -13,9 +13,53 @@
 //   - Does NOT know about game state. Voice is a parallel system.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ICE_SERVERS = [
+// ---------------------------------------------------------------------------
+// ICE servers: STUN for direct P2P discovery + TURN relays for symmetric-NAT
+// fallbacks (mobile carriers, many home routers in India / corporate Wi-Fi).
+//
+// Without a TURN server, ~20-40% of peer pairs across the internet cannot
+// establish a direct path and voice silently fails. The Open Relay Project
+// (metered.ca) offers free public TURN credentials good enough for demos.
+// Swap in your own (Twilio / Metered / coturn) by setting VITE_ICE_SERVERS
+// at build time with a JSON array - e.g.
+//   VITE_ICE_SERVERS='[{"urls":"turn:my.turn.example:3478","username":"u","credential":"p"}]'
+// ---------------------------------------------------------------------------
+
+function loadEnvIceServers() {
+  const raw = import.meta.env?.VITE_ICE_SERVERS;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch {
+    console.warn('[voice] VITE_ICE_SERVERS is not valid JSON - using defaults');
+    return null;
+  }
+}
+
+const DEFAULT_ICE_SERVERS = loadEnvIceServers() || [
+  // Public STUN - cheap probe, finds direct path when both sides are behind
+  // a friendly NAT.
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  // Open Relay Project free TURN (metered.ca). Allows audio to flow over
+  // UDP 80, UDP 443, and TCP 443 (the last one works even through proxies
+  // that block UDP, which is common on corporate / campus networks).
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 export class Peer {
@@ -34,6 +78,11 @@ export class Peer {
 
     this.pc = new RTCPeerConnection({
       iceServers: iceServers || DEFAULT_ICE_SERVERS,
+      // Pre-gather a handful of candidates so the first offer is ready
+      // fast. Low single-digit pool keeps CPU + signalling overhead small.
+      iceCandidatePoolSize: 4,
+      // Try UDP first, fall back to TCP. Default anyway but explicit.
+      iceTransportPolicy: 'all',
     });
 
     this.remoteStream = new MediaStream();
