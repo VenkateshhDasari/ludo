@@ -93,7 +93,7 @@ export default function Menu({ onCreate, onJoin, error, connected }) {
         <div className="rounded-3xl p-8 pt-14 border border-white/10 bg-chrome-900/80 backdrop-blur-xl shadow-[0_30px_60px_-20px_rgba(0,0,0,0.7)]">
           <div className="text-center">
             <div className="text-xs tracking-[0.35em] text-gold-400 font-display font-semibold mb-2">
-              THE PARLOUR GAME
+              THE FRIENDS GAME
             </div>
             <h1 className="font-display font-bold text-white text-5xl leading-none">LUDO</h1>
             <p className="mt-3 text-white/70 text-sm">
@@ -115,7 +115,7 @@ export default function Menu({ onCreate, onJoin, error, connected }) {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Ankita"
+              placeholder="e.g. Venky"
               maxLength={20}
               className="mt-1 w-full bg-transparent border-b border-white/20 focus:border-gold-400 outline-none py-2 text-white font-display placeholder:text-white/30"
             />

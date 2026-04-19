@@ -7,7 +7,7 @@
 // Game reducer/state is still 100% server-authoritative.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Menu from './components/Menu.jsx';
 import Lobby from './components/Lobby.jsx';
 import Board from './components/Board.jsx';
@@ -51,6 +51,49 @@ function useSocketConnected() {
     () => socket.connected,
     () => false,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Back-button / reload guard.
+//   - Pushes a sentinel history entry while a room is active. If the user
+//     hits back (browser button, Android hardware back, iOS swipe), we catch
+//     popstate and show a confirm dialog instead of silently exiting.
+//   - beforeunload adds a native "leave site?" prompt on tab close / reload
+//     (Android Chrome shows it, iOS Safari ignores - browser decision).
+// ---------------------------------------------------------------------------
+function useExitGuard({ enabled, onConfirmLeave, message }) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    // Push a dummy entry so the NEXT back press pops this one first.
+    try { history.pushState({ ludoGuard: true }, ''); } catch {}
+
+    const onPopState = () => {
+      const ok = window.confirm(message || 'Leave the game room?');
+      if (ok) {
+        // Let navigation stand, tell the app to clean up room state.
+        try { onConfirmLeave?.(); } catch {}
+      } else {
+        // Re-push so we're back at the sentinel; next back will intercept again.
+        try { history.pushState({ ludoGuard: true }, ''); } catch {}
+      }
+    };
+
+    const onBeforeUnload = (e) => {
+      // Native "Are you sure you want to leave?" confirm on Android Chrome /
+      // desktop browsers. iOS Safari ignores this by policy.
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [enabled, onConfirmLeave, message]);
 }
 
 function ConnectionDot() {
@@ -343,6 +386,16 @@ export default function App() {
     createRoom, joinRoom, leaveRoom,
     startGame, rollDice, moveToken, restart, voteRematch,
   } = useRoom();
+
+  // Stop phone back-gesture / browser back from nuking the game silently.
+  // Confirm first; if user says yes, cleanly leaveRoom so the server marks
+  // the seat disconnected. Active while any room is loaded.
+  const handleConfirmedLeave = useCallback(() => { leaveRoom(); }, [leaveRoom]);
+  useExitGuard({
+    enabled: !!room,
+    onConfirmLeave: handleConfirmedLeave,
+    message: 'Leave the room? You can rejoin with the same name later.',
+  });
 
   if (!session || !room) {
     return (
