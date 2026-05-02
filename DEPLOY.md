@@ -81,7 +81,18 @@ and send to a friend. Anyone, anywhere.
     ```
   - Redeploy the frontend after changing the env var (Vite bakes env
     vars into the bundle at build time).
-- **In-memory rooms.** A backend redeploy or restart wipes all rooms. This is by design for the free demo; migrate to Redis when you have real users.
+- **Surviving backend restarts (Upstash Redis, free).** Render's free tier
+  restarts the backend every deploy + occasionally for maintenance, taking
+  every active room with it. To survive that, add free Upstash Redis:
+  1. Sign up at https://console.upstash.com (free tier 10K cmds/day).
+  2. Create a database. Copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+  3. On Render → ludo-backend → Environment → add both as env vars.
+  4. Render auto-restarts. The backend now logs `persistence: Upstash Redis`
+     and writes a snapshot of every room on every state change.
+  5. After a redeploy / crash, rooms are loaded back automatically. Clients
+     auto-rejoin via reconnectToken into the same seats with no data loss.
+
+  Without these env vars the server still works, but rooms vanish on restart.
 - **Single process.** One Node instance holds every room. Horizontal scaling needs the Socket.io Redis adapter. Fine for dozens of rooms, not hundreds.
 - **Free Render sleeps.** Use UptimeRobot (free) to ping `/health` every 10 min to keep the dyno warm, or accept the cold-start.
 - **Socket.io CORS != Express CORS.** Both are already configured to honour `CLIENT_ORIGIN`. If you see CORS errors, double-check the exact URL (trailing slashes and schemes matter).

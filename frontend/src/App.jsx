@@ -17,6 +17,7 @@ import Confetti from './components/Confetti.jsx';
 import PostGame from './components/PostGame.jsx';
 import { PlayerChip, EventLog } from './components/PlayerPanel.jsx';
 import { useRoom } from './net/useRoom.js';
+import { useKeepalive } from './net/useKeepalive.js';
 import { useVoice } from './voice/useVoice.js';
 import { socket } from './net/socket.js';
 import { useSyncExternalStore } from 'react';
@@ -109,6 +110,17 @@ function ConnectionDot() {
       />
       {online ? 'online' : 'offline'}
     </span>
+  );
+}
+
+// Sticky banner at the top of the screen while the socket is dropped.
+// Reassures the user that the game state is paused, not lost.
+function ReconnectingBanner({ visible }) {
+  if (!visible) return null;
+  return (
+    <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-chrome-900 text-center py-2 text-sm font-display font-bold shadow-lg">
+      Reconnecting to server…
+    </div>
   );
 }
 
@@ -382,14 +394,16 @@ function GameScreen({ room, session, onRoll, onMove, onRestart, onLeave, onVoteR
 
 export default function App() {
   const {
-    connected, session, room, error,
+    connected, session, room, error, clearError,
     createRoom, joinRoom, leaveRoom,
     startGame, rollDice, moveToken, restart, voteRematch,
   } = useRoom();
 
-  // Stop phone back-gesture / browser back from nuking the game silently.
-  // Confirm first; if user says yes, cleanly leaveRoom so the server marks
-  // the seat disconnected. Active while any room is loaded.
+  // Keep the backend warm while a session is active. 4 min ping prevents
+  // the free-tier dyno from idling out mid-game.
+  useKeepalive(!!session);
+
+  // Trap mobile back / desktop back / reload while a room is loaded.
   const handleConfirmedLeave = useCallback(() => { leaveRoom(); }, [leaveRoom]);
   useExitGuard({
     enabled: !!room,
@@ -397,25 +411,41 @@ export default function App() {
     message: 'Leave the room? You can rejoin with the same name later.',
   });
 
+  // Show the reconnecting banner only when we expect to be online (i.e.
+  // we have a session) but the socket is currently down.
+  const socketOnline = useSocketConnected();
+  const showReconnectingBanner = !!session && !socketOnline;
+
   if (!session || !room) {
     return (
-      <Menu connected={connected} error={error} onCreate={createRoom} onJoin={joinRoom} />
+      <>
+        <ReconnectingBanner visible={showReconnectingBanner} />
+        <Menu connected={connected} error={error} onCreate={createRoom} onJoin={joinRoom} />
+      </>
     );
   }
 
   if (room.phase === 'lobby') {
-    return <Lobby room={room} session={session} onStart={startGame} onLeave={leaveRoom} />;
+    return (
+      <>
+        <ReconnectingBanner visible={showReconnectingBanner} />
+        <Lobby room={room} session={session} onStart={startGame} onLeave={leaveRoom} />
+      </>
+    );
   }
 
   return (
-    <GameScreen
-      room={room}
-      session={session}
-      onRoll={rollDice}
-      onMove={moveToken}
-      onRestart={restart}
-      onLeave={leaveRoom}
-      onVoteRematch={voteRematch}
-    />
+    <>
+      <ReconnectingBanner visible={showReconnectingBanner} />
+      <GameScreen
+        room={room}
+        session={session}
+        onRoll={rollDice}
+        onMove={moveToken}
+        onRestart={restart}
+        onLeave={leaveRoom}
+        onVoteRematch={voteRematch}
+      />
+    </>
   );
 }

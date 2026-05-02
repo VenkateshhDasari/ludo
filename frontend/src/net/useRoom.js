@@ -74,17 +74,26 @@ export function useRoom() {
       })
         .then((ack) => {
           setRoom(ack.room);
-          // Server may have issued a fresh token (always does in our impl).
           if (ack.reconnectToken) {
             const next = { ...saved, reconnectToken: ack.reconnectToken };
             saveSession(next);
             setSession(next);
           }
         })
-        .catch(() => {
-          saveSession(null);
-          setSession(null);
-          setRoom(null);
+        .catch((err) => {
+          // Distinguish "room genuinely gone" from transient network jitter.
+          // Server-side persistence (Upstash) should have restored the room
+          // already - so a hard "Room not found" here means it really is gone
+          // (24h TTL expired, or persistence not configured + restart).
+          const msg = err?.message || '';
+          const gone = /room not found|invalid token|seat not found/i.test(msg);
+          if (gone) {
+            saveSession(null);
+            setSession(null);
+            setRoom(null);
+            setError('Your previous room ended. Create or join a new one.');
+          }
+          // Otherwise keep the session so the next reconnect attempt can retry.
         });
     };
 

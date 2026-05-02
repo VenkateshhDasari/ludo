@@ -18,6 +18,7 @@ import {
 } from '../../shared/constants.js';
 import { reducer, initGameState } from '../../shared/reducer.js';
 import { rollDice, makePlayerId } from './rng.js';
+import { saveRoomBlob, deleteRoomBlob } from './persistence.js';
 
 export class Room {
   constructor({ code, capacity, io }) {
@@ -42,6 +43,53 @@ export class Room {
     // the same seats + accumulated sessionWins preserved.
     this._rematchTimer = null;
     this._rematchStartsAt = null;
+
+    // Debounced-save handle so a single move doesn't fire 5 Redis writes.
+    this._saveDebounce = null;
+  }
+
+  /** Serialise everything needed to rebuild the room after a server
+   *  restart. Timers + sockets are NOT serialised - they rebuild on load. */
+  serialize() {
+    return {
+      code: this.code,
+      capacity: this.capacity,
+      hostId: this.hostId,
+      phase: this.phase,
+      game: this.game,
+      seats: this.seats.map((s) => ({
+        playerId: s.playerId,
+        reconnectToken: s.reconnectToken,
+        color: s.color,
+        name: s.name,
+        // Always restore as disconnected: clients have to re-attach.
+        connected: false,
+        socketId: null,
+        sessionWins: s.sessionWins || 0,
+        wantsRematch: !!s.wantsRematch,
+      })),
+    };
+  }
+
+  /** Reverse of serialize. Re-arms turn timer if the saved game was mid-play. */
+  static fromBlob(blob, io) {
+    const data = typeof blob === 'string' ? JSON.parse(blob) : blob;
+    const room = new Room({ code: data.code, capacity: data.capacity, io });
+    room.hostId = data.hostId;
+    room.phase = data.phase;
+    room.game = data.game || null;
+    room.seats = (data.seats || []).map((s) => ({
+      ...s,
+      connected: false,
+      socketId: null,
+    }));
+    // No-one is connected after a restart; arm the empty-room timer
+    // immediately so abandoned rooms still get cleaned up.
+    if (room.seats.length > 0) room._armEmptyTimer();
+    if (room.phase === 'playing' && room.game && !room.game.winner) {
+      room._armTurnTimer();
+    }
+    return room;
   }
 
   // ---- seats / players ----------------------------------------------------
@@ -283,9 +331,11 @@ export class Room {
 
   _armEmptyTimer() {
     this._cancelEmptyTimer();
+    // 15 min lets users survive long mobile-network blackouts and reload
+    // the page later without losing their seat.
     this._emptyTimer = setTimeout(() => {
       if (this.connectedCount() === 0 && this._onEmptyTimeout) this._onEmptyTimeout(this);
-    }, 5 * 60 * 1000);
+    }, 15 * 60 * 1000);
   }
 
   _cancelEmptyTimer() {
@@ -320,5 +370,19 @@ export class Room {
 
   broadcast() {
     this.io.to(this.code).emit('state', this.snapshot());
+    this._scheduleSave();
+  }
+
+  /** Debounced-save to Redis. Coalesces rapid state changes into one write
+   *  so a multi-action turn doesn't burn 5 commands per move. */
+  _scheduleSave() {
+    if (this._saveDebounce) return;
+    this._saveDebounce = setTimeout(() => {
+      this._saveDebounce = null;
+      try {
+        const blob = JSON.stringify(this.serialize());
+        saveRoomBlob(this.code, blob);
+      } catch (e) { /* best effort */ }
+    }, 250);
   }
 }

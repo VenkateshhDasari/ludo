@@ -22,7 +22,8 @@ import cors from 'cors';
 import http from 'node:http';
 import { Server as IOServer } from 'socket.io';
 
-import { createRoom, findRoom } from './rooms.js';
+import { createRoom, findRoom, restoreRoomsFromPersistence } from './rooms.js';
+import { persistenceEnabled } from './persistence.js';
 import { EMOJI_REACTIONS } from '../../shared/constants.js';
 
 const PORT = Number(process.env.PORT || 3001);
@@ -297,8 +298,13 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`[ludo] listening on :${PORT}  (CLIENT_ORIGIN=${ORIGIN})`);
+  console.log(`[ludo] persistence: ${persistenceEnabled ? 'Upstash Redis' : 'in-memory only'}`);
+  if (persistenceEnabled) {
+    const n = await restoreRoomsFromPersistence(io);
+    console.log(`[ludo] restored ${n} room(s) from Redis`);
+  }
 });
 
 // Graceful shutdown so PaaS (Render, Fly, etc.) rolling deploys don't drop
